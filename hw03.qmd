@@ -15,7 +15,7 @@ mainfont: "Noto Sans Korean Light"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, eval = TRUE, warning = FALSE, message = FALSE, fig.width=6, fig.height=4, out.width = "70%", fig.align = "center", python.reticulate = TRUE)  
 options(knitr.table.format = "html")
-reticulate::use_condaenv(condaenv = "introds", conda = "/opt/homebrew/bin/conda") # for persistency
+reticulate::use_condaenv("introds", required = TRUE)   # for persistency
 ```
 
 ## 지시사항
@@ -63,7 +63,35 @@ Python code
 
 1. MDSR 10장 연습문제 10.6.6
 
-### 답안
+### 답안(연습문제 10.6.6)
+
+#### **데이터 랭글링 절차**
+
+**R**: 
+**Python**: 
+------------------------------------------------------------------------
+
+::: panel-tabset
+## R
+
+```{r}
+
+```
+
+## Python
+
+```{python}
+
+```
+:::
+
+------------------------------------------------------------------------
+
+#### **결과해석**
+
+
+#### **두 언어의 결과 비교 및 차이점**
+
 
 
 # 2부  데이터 분석 실무
@@ -99,6 +127,37 @@ $$
 
 
 ### 답안
+
+### 답안(연습문제 10.6.6)
+
+#### **데이터 랭글링 절차**
+
+**R**: 
+**Python**: 
+------------------------------------------------------------------------
+
+::: panel-tabset
+## R
+
+```{r}
+
+```
+
+## Python
+
+```{python}
+
+```
+:::
+
+------------------------------------------------------------------------
+
+#### **결과해석**
+
+
+#### **두 언어의 결과 비교 및 차이점**
+
+
 
 ## 문제 2-2
 
