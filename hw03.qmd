@@ -67,32 +67,144 @@ Python code
 
 #### **데이터 랭글링 절차**
 
-**R**: 
-**Python**: 
+**R**: `NHANES` 패키지의 `NHANES` 데이터에서 20세 이상 관측치를 필터링한 후,
+`SmokeNow`와 `Smoke100` 변수를 결합하여 현재 정기적 흡연 여부를 나타내는 이진
+변수 `SmokeCurrent`를 생성하였다. `SmokeNow == "Yes"`이면 1, `SmokeNow == "No"` 또는 `Smoke100 == "No"`이면 0으로 리코딩하였으며, 나머지 결측값은 분석에서 제외하였다. 이후 예측변수(`Age`, `Gender`, `Race1`, `Education`, `HHIncomeMid`, `BMI`, `PhysActive`, `Alcohol12PlusYr`, `Depressed`, `SleepHrsNight`)를 포함한 완전한 케이스만 선택하였다 (N = 5,898).
+**Python**: Polars를 사용하여 CSV 파일에서 동일한 데이터 랭글링 절차를 수행하였다. `pl.when().then().otherwise()` 구문으로 `SmokeCurrent`를 생성하고, `drop_nulls()` 로 결측값을 제거한 후 statsmodels 적합을 위해 Pandas DataFrame으로 변환하였다. `Depressed` 변수의 기준 범주가 Python의 경우 알파벳순으로 `Most`로 설정되어 R의 `None`과 달라지므로, `C(Depressed, Treatment('None'))`으로 명시적으로 지정하여 두 언어의 결과를 일치시켰다.
 ------------------------------------------------------------------------
 
 ::: panel-tabset
 ## R
 
 ```{r}
+library(tidyverse)
+library(NHANES)
+nhanes_smoke <- NHANES %>%
+  filter(Age >= 20) %>%
+  # SmokeNow의 NA 중 Smoke100 == "No"인 경우를 0으로 리코딩
+  mutate(
+    SmokeCurrent = case_when(
+      SmokeNow == "Yes"  ~ 1L,   # 현재 정기적 흡연자
+      SmokeNow == "No"   ~ 0L,   # 과거 흡연자 (현재 비흡연)
+      Smoke100 == "No"   ~ 0L,   # 비흡연자 (100개비 미만)
+      TRUE               ~ NA_integer_  # 나머지 NA 제거
+    ),
+    SmokeCurrent = factor(SmokeCurrent, levels = c(0, 1),
+                          labels = c("No", "Yes"))
+  ) %>%
+  # 예측변수 + 결과변수만 선택 후 완전한 케이스만 사용
+  select(SmokeCurrent, Age, Gender, Race1, Education,
+         HHIncomeMid, BMI, PhysActive,
+         Alcohol12PlusYr, Depressed, SleepHrsNight) %>%
+  drop_na()
 
+# 로지스틱 회귀 모델 적합
+smoke_model <- glm(
+  SmokeCurrent ~ Age + Gender + Race1 + Education +
+    HHIncomeMid + BMI + PhysActive +
+    Alcohol12PlusYr + Depressed + SleepHrsNight,
+  data   = nhanes_smoke,
+  family = binomial
+)
+
+summary(smoke_model)
 ```
 
 ## Python
 
 ```{python}
+import polars as pl
+from plotnine import *
+import pandas as pd
+import statsmodels.formula.api as smf
 
+NHANES = pl.read_csv('data/NHANES.csv',
+    schema_overrides={
+        "Age": pl.Float64, 
+        "BMI": pl.Float64
+    },
+    null_values=["NA", " ", "null"] 
+)
+
+# 1. 데이터 랭글링 절차
+nhanes_smoke = (
+    NHANES
+    .filter(pl.col("Age") >= 20)
+    .with_columns(
+        pl.when(pl.col("SmokeNow") == "Yes").then(1)
+        .when(pl.col("SmokeNow") == "No").then(0)
+        .when(pl.col("Smoke100") == "No").then(0)
+        .otherwise(None)
+        .alias("SmokeCurrent")
+    )
+    .select([
+        "SmokeCurrent", "Age", "Gender", "Race1", "Education",
+        "HHIncomeMid", "BMI", "PhysActive", 
+        "Alcohol12PlusYr", "Depressed", "SleepHrsNight"
+    ])
+    .drop_nulls()
+)
+
+# 2. 모델 적합을 위해 Pandas로 변환 
+nhanes_smoke_pd = nhanes_smoke.to_pandas()
+
+# 3. 로지스틱 회귀 모델 적합
+
+formula = """
+    SmokeCurrent ~ Age + C(Gender) + C(Race1) + C(Education) + 
+    HHIncomeMid + BMI + C(PhysActive) + C(Alcohol12PlusYr) + 
+    C(Depressed, Treatment('None')) + SleepHrsNight
+"""
+
+smoke_model = smf.logit(formula=formula, data=nhanes_smoke_pd).fit()
+
+# 4. 결과 요약 출력
+print(smoke_model.summary())
 ```
 :::
 
 ------------------------------------------------------------------------
 
 #### **결과해석**
+20세 이상 성인 5,898명을 대상으로 현재 정기적 흡연 여부(`SmokeCurrent`)를
+예측하는 로지스틱 회귀 모델을 적합하였다 (현재 흡연자 비율: 20.1%).
+모델의 AIC는 4,962이며, Null deviance 대비 Residual deviance가 5,909에서
+4,926으로 감소하여 모델이 유의미한 설명력을 가짐을 확인하였다.
 
+유의한 예측변수($\alpha = 0.05$)는 다음과 같다.
+
+- **나이 (`Age`)**: 나이가 증가할수록 현재 흡연 가능성이 유의하게 감소하였다
+  ($\hat\beta = -0.026$, $p < 0.001$).
+- **성별 (`Gender`)**: 남성이 여성에 비해 흡연 가능성이 유의하게 높았다
+  ($\hat\beta = 0.175$, $p = 0.018$).
+- **인종 (`Race1`)**: Black을 기준으로 Hispanic($\hat\beta = -0.487$)과
+  Mexican($\hat\beta = -1.118$)은 흡연 가능성이 유의하게 낮았으나,
+  White와 Other는 유의한 차이가 없었다.
+- **교육 수준 (`Education`)**: 8학년 이하를 기준으로 고등학교 졸업 이상부터
+  흡연 가능성이 유의하게 낮아졌으며, 대학 졸업자에서 가장 강한 음의 효과를
+  보였다($\hat\beta = -1.737$, $p < 0.001$).
+- **가구 소득 (`HHIncomeMid`)**: 소득이 높을수록 흡연 가능성이 유의하게
+  감소하였다($\hat\beta = -7.4 \times 10^{-6}$, $p < 0.001$).
+- **BMI**: BMI가 높을수록 흡연 가능성이 유의하게 감소하였다
+  ($\hat\beta = -0.046$, $p < 0.001$).
+- **신체활동 (`PhysActive`)**: 신체활동을 하는 사람이 그렇지 않은 사람보다
+  흡연 가능성이 유의하게 낮았다($\hat\beta = -0.635$, $p < 0.001$).
+- **음주 여부 (`Alcohol12PlusYr`)**: 음주자가 비음주자보다 흡연 가능성이
+  유의하게 높았으며($\hat\beta = 1.351$, $p < 0.001$), 모든 예측변수 중
+  가장 강한 양의 효과를 보였다.
+- **우울감 (`Depressed`)**: 우울감이 없는 경우(None)에 비해 Several
+  ($\hat\beta = 0.559$)과 Most($\hat\beta = 0.358$) 모두 흡연 가능성이
+  유의하게 높았다.
+- **수면 시간 (`SleepHrsNight`)**: 수면 시간이 길수록 흡연 가능성이 유의하게
+  감소하였다($\hat\beta = -0.169$, $p < 0.001$).
 
 #### **두 언어의 결과 비교 및 차이점**
-
-
+R과 Python의 모든 회귀 계수, 표준오차, z값, p값이 완전히 일치하였다.
+단, `Depressed` 변수의 기준 범주 설정에서 차이가 발생하였다. R은 factor
+level 순서에 따라 `None`을 기준으로 설정하는 반면, Python `statsmodels`의
+`C()` 함수는 알파벳순으로 `Most`를 기준으로 설정한다. 이를 해결하기 위해
+Python에서 `C(Depressed, Treatment('None'))`으로 기준 범주를 명시적으로
+지정하여 두 언어의 결과를 일치시켰다.
 
 # 2부  데이터 분석 실무
 
