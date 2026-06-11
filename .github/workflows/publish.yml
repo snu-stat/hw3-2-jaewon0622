@@ -27,7 +27,7 @@ jobs:
 
       - name: Install Python dependencies via Conda
         run: |
-          conda install -n introds numpy pandas matplotlib polars statsmodels scipy plotnine -y
+          conda install -n introds numpy pandas matplotlib polars statsmodels scipy plotnine pyarrow -y
           conda run -n introds pip install pylahman
         shell: bash -l {0}
 
