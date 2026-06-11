@@ -22,13 +22,13 @@ jobs:
         with:
           auto-update-conda: true
           python-version: '3.10'
-          activate-environment: r-reticulate
+          activate-environment: introds
           channels: conda-forge,defaults
 
       - name: Install Python dependencies via Conda
         run: |
-          conda install -n r-reticulate numpy pandas matplotlib polars statsmodels scipy plotnine -y
-          conda run -n r-reticulate pip install pylahman
+          conda install -n introds numpy pandas matplotlib polars statsmodels scipy plotnine -y
+          conda run -n introds pip install pylahman
         shell: bash -l {0}
 
       - name: Set up R
@@ -48,7 +48,7 @@ jobs:
 
       - name: Render Quarto
         run: |
-          export RETICULATE_PYTHON=$(conda info --base)/envs/r-reticulate/bin/python
+          export RETICULATE_PYTHON=$(conda info --base)/envs/introds/bin/python
           quarto render
           quarto convert hw03.qmd
           cp hw03.ipynb _site/
