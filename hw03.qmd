@@ -1116,22 +1116,103 @@ R과 동일한 스케일(2874-2875)로 계산되어 직접 비교가 가능하�
 
 #### **데이터 랭글링 절차**
 
-**R**: 
+**R**: 문제 2-3-1의 `teams_full`을 그대로 사용하였다. `MASS::glm.nb()`로
+음이항 회귀 full 모형 적합을 시도하였으며, `tryCatch()`로 오류 및 경고를
+포착하였다.
 
-**Python**: 
+**Python**: 포아송 회귀와 동일한 데이터(`teams_pd_poisson`)를 사용하였다.
+`statsmodels.formula.api.negativebinomial()`로 음이항 회귀를 시도하였으며,
+`warnings.catch_warnings()`로 경고를 오류로 변환하여 포착하였다.
 ------------------------------------------------------------------------
 
 ::: panel-tabset
 ## R
 
 ```{r}
+library(MASS)
+library(tidyverse)
 
+# 음이항 회귀를 이용한 전체 분석(Full 모형 및 단계별 선택) 시도
+nb_analysis_r <- tryCatch({
+  
+  full_nb_model <- glm.nb(
+    W ~ logRS + logRA + H + X2B + X3B + HR + BB + SO + CS + 
+        HBP + SF + ERA + CG + SHO + IPouts + HA + HRA + BBA + 
+        SOA + E + DP + FP + SV + offset(log(G)),
+    data = teams_full
+  )
+  
+  step_nb_model <- stepAIC(full_nb_model, direction = "both", trace = FALSE)
+  summary(step_nb_model)
+  
+}, error = function(e) {
+  return(paste("오류 발생:", e$message))
+}, warning = function(w) {
+  return(paste("경고 발생:", w$message))
+})
+
+# 포착된 에러 또는 경고 메시지 출력
+print(nb_analysis_r)
 ```
 
 ## Python
 
 ```{python}
+import statsmodels.formula.api as smf
+import warnings
 
+def stepwise_selection_nb(df, target, predictors, exposure_col):
+    current_predictors = list(predictors)
+    
+    formula = f"{target} ~ 1 + " + " + ".join(current_predictors)
+    current_model = smf.negativebinomial(formula=formula, data=df, exposure=df[exposure_col]).fit(disp=0)
+    best_aic = current_model.aic
+    
+    while True:
+        best_action = None
+        best_candidate = None
+        
+        for var in current_predictors:
+            test_preds = [p for p in current_predictors if p != var]
+            test_formula = f"{target} ~ 1 + " + " + ".join(test_preds)
+            test_model = smf.negativebinomial(formula=test_formula, data=df, exposure=df[exposure_col]).fit(disp=0)
+            
+            if test_model.aic < best_aic:
+                best_aic = test_model.aic
+                best_action = 'drop'
+                best_candidate = var
+                
+        excluded_predictors = [p for p in predictors if p not in current_predictors]
+        for var in excluded_predictors:
+            test_preds = current_predictors + [var]
+            test_formula = f"{target} ~ 1 + " + " + ".join(test_preds)
+            test_model = smf.negativebinomial(formula=test_formula, data=df, exposure=df[exposure_col]).fit(disp=0)
+            
+            if test_model.aic < best_aic:
+                best_aic = test_model.aic
+                best_action = 'add'
+                best_candidate = var
+                
+        if best_action == 'drop':
+            current_predictors.remove(best_candidate)
+        elif best_action == 'add':
+            current_predictors.append(best_candidate)
+        else:
+            break 
+            
+    final_formula = f"{target} ~ 1 + " + " + ".join(current_predictors)
+    final_model = smf.negativebinomial(formula=final_formula, data=df, exposure=df[exposure_col]).fit(disp=0)
+    return final_model
+
+# 전체 과정 실행 시도 및 에러/경고 포착
+try:
+    # Python에서 발생하는 ConvergenceWarning 등의 경고를 에러로 취급하여 중단
+    with warnings.catch_warnings():
+        warnings.simplefilter("error") 
+        step_model_nb = stepwise_selection_nb(teams_pd_poisson, "W", predictors, "G")
+        print(step_model_nb.summary())
+except Exception as e:
+    print(f"경고 또는 오류 발생으로 중단됨: {e}")
 ```
 
 :::
@@ -1140,8 +1221,38 @@ R과 동일한 스케일(2874-2875)로 계산되어 직접 비교가 가능하�
 
 #### **결과해석**
 
+R과 Python 모두 음이항 회귀 모형 적합에 실패하였다.
+
+- **R**: "iteration 제한에 도달했습니다" 경고 발생 — 최대 반복 횟수 내에
+  알고리즘이 수렴하지 못하였음을 의미한다.
+- **Python**: "divide by zero encountered in log" 오류 발생 — 로그 함수
+  내부에 0 이하의 값이 입력되어 수치적으로 발산하였음을 의미한다.
+
+**수렴 실패의 원인**
+
+음이항 분포는 포아송 분포에 과산포(overdispersion) 모수 $\theta$를 추가한
+모형으로, 데이터의 분산이 평균보다 클 때 포아송 회귀의 대안으로 사용된다.
+그러나 이 데이터에서 수렴이 실패한 이유는 다음과 같다.
+
+첫째, **과산포가 없는 데이터**이기 때문이다. 문제 2-3-1에서 포아송 모형의
+Residual deviance = 67.53, df = 446으로 deviance/df ≈ 0.15에 불과하여
+오히려 과소산포(underdispersion) 경향이 있다. 과산포가 없는 데이터에
+음이항 모형을 적합하면 과산포 모수 $\theta$가 무한대로 발산하여 수렴에
+실패하게 된다.
+
+둘째, **설명변수의 수가 많아** 다중공선성이 심한 full 모형에서 최적화
+알고리즘이 안정적으로 작동하지 못하는 수치적 불안정성이 발생할 수 있다.
+
+따라서 이 데이터에서는 포아송 회귀가 적절한 모형이며, 음이항 회귀는
+적합하지 않다.
+
 
 #### **두 언어의 결과 비교 및 차이점**
+
+R과 Python 모두 동일한 원인(수렴 실패)으로 모형 적합에 실패하였다.
+오류 메시지의 형태는 다르나(R: 반복 제한 경고, Python: 로그 0 오류),
+모두 과산포 모수 추정 과정에서의 수치적 불안정성을 반영한다.
+
 
 ## 문제 2-4
 
@@ -1158,22 +1269,94 @@ $$
 
 #### **데이터 랭글링 절차**
 
-**R**: 
+**R**: `Lahman` 패키지의 `Teams` 데이터에서 스테로이드 시대(1994–2005)와
+최근 시대(2010–2025, 2020 제외)를 필터링하였다. `R`을 `RS`로 이름을
+변경하고, 득실점 로그 비율(`log_ratio = log(RS/RA)`), 스테로이드 시대
+지시함수(`is_steroid`), 승률(`WPct`)을 생성하였다. 절편 없는 로지스틱
+회귀에 `log_ratio:is_steroid` 교호작용 항을 추가하여 시대별 $k$ 계수
+차이($g$)를 추정하였다.
 
-**Python**: 
+**Python**: `pylahman` 패키지가 2025년 데이터를 포함하지 않으므로 R
+`Lahman` 패키지에서 내보낸 `Teams.csv`를 사용하였다. 동일한 필터링 및
+변수 생성을 Polars로 수행한 후 `statsmodels`로 모형을 적합하였다.
+
 ------------------------------------------------------------------------
 
 ::: panel-tabset
 ## R
 
 ```{r}
+library(tidyverse)
+library(Lahman)
 
+# 1. 데이터 랭글링 (두 시대 필터링 및 지시함수 변수 생성)
+teams_era <- Teams %>%
+  filter(
+    (yearID >= 1994 & yearID <= 2005) | 
+    (yearID >= 2010 & yearID <= 2025 & yearID != 2020)
+  ) %>%
+  rename(RS = R) %>%
+  mutate(
+    log_ratio = log(RS / RA),
+    is_steroid = ifelse(yearID >= 1994 & yearID <= 2005, 1, 0),
+    WPct = W / G
+  ) %>%
+  drop_na(W, G, log_ratio, is_steroid)
+
+# 2. 로지스틱 회귀 모형 적합 (절편 없음, 교호작용 항 추가)
+# log_ratio:is_steroid 는 log_ratio와 is_steroid를 곱한 교호작용(g)을 의미함
+era_model_r <- glm(
+  cbind(W, G - W) ~ 0 + log_ratio + log_ratio:is_steroid,
+  data = teams_era,
+  family = binomial
+)
+
+# 3. 회귀계수 추정치 및 가설검정 결과 확인
+summary(era_model_r)
 ```
 
 ## Python
 
 ```{python}
+import polars as pl
+import numpy as np
+import statsmodels.formula.api as smf
+import statsmodels.api as sm
+import pylahman
 
+# 1. 데이터 로드 및 랭글링
+Teams = pl.read_csv(
+    "data/Teams.csv",
+    null_values=["NA", " ", "null"] )
+
+teams_era_py = (
+    Teams
+    .filter(
+        ((pl.col("yearID") >= 1994) & (pl.col("yearID") <= 2005)) |
+        ((pl.col("yearID") >= 2010) & (pl.col("yearID") <= 2025) & (pl.col("yearID") != 2020))
+    )
+    .rename({"R": "RS"})
+    .with_columns(
+        log_ratio = np.log(pl.col("RS") / pl.col("RA")),
+        # 스테로이드 시대이면 1, 아니면 0인 지시함수 변수 생성
+        is_steroid = pl.when((pl.col("yearID") >= 1994) & (pl.col("yearID") <= 2005)).then(1).otherwise(0),
+        WPct = pl.col("W") / pl.col("G")
+    )
+    .drop_nulls(subset=["WPct", "log_ratio", "is_steroid"])
+)
+
+teams_pd_era = teams_era_py.to_pandas()
+
+# 2. 로지스틱 회귀 모형 적합 (절편 없음, 교호작용 항 추가)
+era_model_py = smf.glm(
+    formula="WPct ~ 0 + log_ratio + log_ratio:is_steroid",
+    data=teams_pd_era,
+    family=sm.families.Binomial(),
+    var_weights=teams_pd_era["G"]
+).fit()
+
+# 3. 회귀계수 추정치 및 가설검정 결과 확인
+print(era_model_py.summary())
 ```
 
 :::
@@ -1182,8 +1365,32 @@ $$
 
 #### **결과해석**
 
+모형의 계수는 다음과 같이 해석된다.
+
+- **`log_ratio`** ($\hat{k} = 1.753$, $p < 0.001$): 최근 시대(2010–2025)의
+  피타고라스 지수로, 문제 2-1-1의 추정치와 동일하다.
+- **`log_ratio:is_steroid`** ($\hat{g} = 0.161$, $p = 0.032$): 스테로이드
+  시대의 추가적인 $k$ 증가분으로, 스테로이드 시대의 $k$는
+  $1.753 + 0.161 = 1.914$로 추정된다.
+
+귀무가설 $H_0: g = 0$ (두 시대의 $k$가 동일)에 대한 검정 결과,
+$\hat{g} = 0.161$ (95% CI: [0.014, 0.307], $p = 0.032$)으로 유의수준
+$\alpha = 0.05$에서 귀무가설을 기각한다. 즉, 스테로이드 시대(1994–2005)의
+$k$가 최근 시대(2010–2025)보다 유의하게 크다. 이는 스테로이드 시대에는
+득실점 비율이 승률을 더 강하게 설명하였음을 의미한다. 스테로이드
+사용으로 타격 성적이 전반적으로 향상되어 득실점 격차가 커졌고, 이로 인해
+피타고라스 지수가 높아진 것으로 해석할 수 있다.
+
 
 #### **두 언어의 결과 비교 및 차이점**
+
+R과 Python의 추정치(`log_ratio` = 1.7527, `log_ratio:is_steroid` = 0.1605),
+표준오차, z값, p값, Residual deviance(315.80)가 완전히 일치하였다. 2-2와
+동일하게 Python의 Log-Likelihood가 R보다 큰 음수로 표시되나, 이는
+`var_weights` 사용 시 `statsmodels`의 AIC 계산 방식 차이에 의한 것으로
+모형 추정 결과 자체에는 영향이 없다.
+
+
 # 3부  데이터 분석 기술
 
 숙제 2에서는 제출용 GitHub 저장소에 작업한 Quarto markdown 소스 파일(`hw02.qmd`)을 올리면 GitHub에서 자동으로 HTML 파일 및 주피터 노트북 파일(`.ipynb`)을 만들고 이것을 [GitHub Pages](https://docs.github.com/en/pages/quickstart)에서 웹페이지로 보이도록 설정하였다. 
