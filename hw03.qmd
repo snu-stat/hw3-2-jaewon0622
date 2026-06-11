@@ -16,7 +16,7 @@ mainfont: "Noto Sans Korean Light"
 knitr::opts_chunk$set(echo = TRUE, eval = TRUE, warning = FALSE, message = FALSE, fig.width=6, fig.height=4, out.width = "70%", fig.align = "center", python.reticulate = TRUE)  
 
 options(knitr.table.format = "html")
-reticulate::use_condaenv("C:/Users/82106/AppData/Local/r-miniconda/envs/introds/python.exe", required = TRUE)
+reticulate::use_condaenv("introds", required = TRUE)
 ```
 
 ## 지시사항
@@ -463,11 +463,236 @@ R과 Python의 $\hat{\beta}_1$ 추정치(1.7527), 표준오차(0.046), z값(38.4
 Residual deviance(180.38), 95% 신뢰구간([1.663, 1.842]) 모두 완전히
 일치하였다.
 
+### 답안(2-1-3)
+
+#### **데이터 랭글링 절차**
+
+**R**: `logit_model_r` 객체에서 `fitted()`, `residuals()`, `predict()`를
+사용하여 예측 승률(`fitted_WPct`), Deviance 잔차(`resid_dev`), 선형 예측값
+(`eta`)을 `teams_logistic`에 추가하였다. Residual Deviance의 유의성은
+`pchisq()`로 카이제곱 분포와 비교하였으며, 산점도는 `ggplot2`로 시각화하였다.
+
+**Python**: `logit_model_py` 객체의 `fittedvalues`, `resid_deviance` 속성을
+Polars DataFrame에 결합하였다. 선형 예측값(`eta`)은 `log_ratio`에 추정된
+계수를 곱하여 직접 계산하였다. Residual Deviance의 유의성은
+`scipy.stats.chi2.cdf()`로 평가하였으며, 산점도는 `plotnine`으로 시각화하였다.
+------------------------------------------------------------------------
+
+::: panel-tabset
+## R
+
+```{r}
+library(tidyverse)
+library(broom)
+
+# 1. 모델 진단을 위한 데이터 추출 (fitted values, residuals 등)
+teams_diag <- teams_logistic %>%
+  mutate(
+    fitted_WPct = fitted(logit_model_r),
+    resid_dev = residuals(logit_model_r, type = "deviance"),
+    eta = predict(logit_model_r, type = "link")
+  )
+
+# i. Residual Deviance 평가
+res_dev <- summary(logit_model_r)$deviance
+df_res <- summary(logit_model_r)$df.residual
+p_value <- 1 - pchisq(res_dev, df_res)
+
+cat("Residual Deviance:", res_dev, "\n")
+cat("Degrees of Freedom:", df_res, "\n")
+cat("P-value:", p_value, "\n\n")
+
+# ii. Deviance residuals vs linear predictors 산점도
+plot_ii <- ggplot(teams_diag, aes(x = eta, y = resid_dev)) +
+  geom_point(alpha = 0.5, color = "blue") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Deviance Residuals vs Linear Predictors",
+    x = "Linear Predictor (eta)",
+    y = "Deviance Residual"
+  ) +
+  theme_minimal()
+
+print(plot_ii)
+
+# iii. 관측된 WPct vs 예측된 WPct 산점도
+plot_iii <- ggplot(teams_diag, aes(x = fitted_WPct, y = WPct)) +
+  geom_point(alpha = 0.5, color = "darkgreen") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(
+    title = "Observed vs Predicted WPct",
+    x = "Predicted WPct",
+    y = "Observed WPct (Actual)"
+  ) +
+  theme_minimal()
+
+print(plot_iii)
+```
+
+## Python
+
+```{python}
+import polars as pl
+import numpy as np
+import scipy.stats as stats
+from plotnine import *
+
+# 1. 모델 진단을 위한 데이터 추출
+# statsmodels의 logit_model_py 객체에서 파생 변수들을 Polars로 결합
+# (이전 단계에서 teams_logistic_py, logit_model_py, teams_pd가 정의되어 있다고 가정)
+teams_diag = (
+    teams_logistic_py
+    .with_columns(
+        fitted_WPct = pl.Series(logit_model_py.fittedvalues),
+        resid_dev = pl.Series(logit_model_py.resid_deviance),
+        # statsmodels에서 eta(linear predictor)는 X * beta로 계산
+        eta = pl.col("log_ratio") * logit_model_py.params.iloc[0]
+    )
+)
+
+# i. Residual Deviance 평가
+res_dev = logit_model_py.deviance
+df_res = logit_model_py.df_resid
+p_value = 1 - stats.chi2.cdf(res_dev, df_res)
+
+print(f"Residual Deviance: {res_dev:.4f}")
+print(f"Degrees of Freedom: {df_res}")
+print(f"P-value: {p_value:.4f}\n")
+
+# ii. Deviance residuals vs linear predictors 산점도
+plot_ii = (
+    ggplot(teams_diag, aes(x="eta", y="resid_dev"))
+    + geom_point(alpha=0.5, color="blue")
+    + geom_hline(yintercept=0, linetype="dashed", color="red")
+    + labs(
+        title="Deviance Residuals vs Linear Predictors",
+        x="Linear Predictor (eta)",
+        y="Deviance Residual"
+    )
+    + theme_minimal()
+)
+plot_ii.show()
+
+# iii. 관측된 WPct vs 예측된 WPct 산점도
+plot_iii = (
+    ggplot(teams_diag, aes(x="fitted_WPct", y="WPct"))
+    + geom_point(alpha=0.5, color="darkgreen")
+    + geom_abline(intercept=0, slope=1, linetype="dashed", color="red")
+    + labs(
+        title="Observed vs Predicted WPct",
+        x="Predicted WPct",
+        y="Observed WPct (Actual)"
+    )
+    + theme_minimal()
+)
+plot_iii.show()
+```
+
+:::
+
+------------------------------------------------------------------------
+
+#### **결과해석**
+
+세 가지 진단을 통해 모형 적합도를 평가하였다.
+
+**i. Residual Deviance (카이제곱 분포와 비교)**
+
+Residual Deviance = 180.38, 자유도 = 449로, 귀무가설(모형이 데이터를 잘
+설명함) 하에서 카이제곱 분포를 따른다. p-value = 1.000으로, Residual
+Deviance가 자유도에 비해 매우 작아 과소산포(underdispersion) 경향이
+있음을 의미한다. 이는 모형이 데이터를 충분히 잘 설명하고 있으며, 적합
+부족(lack of fit)의 근거가 없음을 나타낸다. 
+
+**ii. Deviance Residuals vs Linear Predictors 산점도**
+
+잔차가 선형 예측값($\eta$) 전 범위에 걸쳐 0을 중심으로 무작위하게
+분포하며, 뚜렷한 패턴이 관찰되지 않는다. 이는 모형의 체계적 오적합이
+없음을 시사한다.
+
+**iii. 관측값 vs 예측값 산점도**
+
+관측된 승률과 모형이 예측한 승률이 기준선($y = x$) 주변에 밀집하여
+분포하고 있어, 모형이 팀 승률을 전반적으로 잘 예측하고 있음을 확인할 수 있다.
+
+세 진단 결과를 종합하면, 절편 없는 로지스틱 회귀 모형은 MLB 팀 승률
+데이터에 잘 적합되었다고 판단할 수 있다.
+
+#### **두 언어의 결과 비교 및 차이점**
+
+R과 Python의 Residual Deviance(180.38), 자유도(449), p-value(1.000)가
+완전히 일치하였다. 산점도 역시 동일한 데이터를 기반으로 하여 동일한
+결과를 보였다. R은 `ggplot2`, Python은 `plotnine`을 사용하였으나 두
+라이브러리 모두 Grammar of Graphics 체계를 따르므로 코드 구조가 거의
+동일하다.
+
+### 답안(2-1-4)
+
+#### **데이터 랭글링 절차**
+
+**R**: 
+
+**Python**: 
+------------------------------------------------------------------------
+
+::: panel-tabset
+## R
+
+```{r}
+
+```
+
+## Python
+
+```{python}
+
+```
+
+:::
+
+------------------------------------------------------------------------
+
+#### **결과해석**
+
+
+#### **두 언어의 결과 비교 및 차이점**
+
+
 ## 문제 2-2
 
 `WPct`를 반응변수로, `logRS`, `logRA`, `H`, `X2B`, `X3B`, `HR`, `BB`, `SO`, `CS`, `HBP`, `SF`, `ERA`, `CG`, `SHO`, `IPouts`, `HA`, `HRA`, `BBA`, `SOA`, `E`, `DP`, `FP`, `SV`를 설명변수로 하는 절편항이 있는 로지스틱 회귀 모형을 적합하고 AIC를 기준으로 하는 단계별(stepwise) 변수선택을 적용하라. 변수선택 후 남은 변수들을 모두 모형에 남길지 일부를 제거할지 다시 판단하라. 최종적으로 선택된 모형을 문제1의 모형과 비교하라. 
 
-### 답안
+### 답안(2-2)
+
+#### **데이터 랭글링 절차**
+
+**R**: 
+
+**Python**: 
+------------------------------------------------------------------------
+
+::: panel-tabset
+## R
+
+```{r}
+
+```
+
+## Python
+
+```{python}
+
+```
+
+:::
+
+------------------------------------------------------------------------
+
+#### **결과해석**
+
+
+#### **두 언어의 결과 비교 및 차이점**
+
 
 ## 문제 2-3
 
