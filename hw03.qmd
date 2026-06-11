@@ -735,6 +735,387 @@ Residual Deviance(180.24), 자유도(448), 95% 신뢰구간이 모두 일치하�
 
 #### **데이터 랭글링 절차**
 
+**R**: `teams_filtered`에 `logRS = log(R)`, `logRA = log(RA)`를 추가하고
+분석에 필요한 변수만 선택한 후 결측치를 제거하였다 (n = 450). 23개 설명변수를
+포함한 절편 있는 full 로지스틱 회귀 모형을 적합한 후, `MASS::stepAIC()`로
+양방향 단계적 변수 선택을 수행하였다. 선택된 모형에서 유의하지 않은 변수
+(`CG`, `SHO`)를 추가로 제거하여 최종 모형을 확정하였다.
+
+**Python**: `teams_filtered`에 `logRS`, `logRA`를 추가한 후 필요한 컬럼만
+선택하고 결측치를 제거하였다. `statsmodels`에는 `stepAIC`에 해당하는 내장
+함수가 없으므로, full model에서 출발하여 AIC가 감소하는 방향으로 변수를
+추가/제거하는 양방향 단계적 선택 함수를 직접 구현하였다. 이후 R과 동일하게
+`CG`, `SHO`를 제거한 최종 모형을 적합하였다.
+------------------------------------------------------------------------
+
+::: panel-tabset
+## R
+
+```{r}
+library(MASS)
+library(tidyverse)
+
+# 1. 데이터 랭글링 (변수명 변경 및 결측치 제거)
+teams_full <- teams_filtered %>%
+  mutate(
+    logRS = log(R),
+    logRA = log(RA)
+  )%>%
+  dplyr::select(W, L, G, WPct, logRS, logRA, H, X2B, X3B, HR, BB, SO, CS, 
+        HBP, SF, ERA, CG, SHO, IPouts, HA, HRA, BBA, SOA, E, DP, FP, SV) %>%
+  drop_na()
+
+# 2. 절편이 있는 Full 로지스틱 회귀 모형 적합
+full_model <- glm(
+  cbind(W, L) ~ logRS + logRA + H + X2B + X3B + HR + BB + SO + CS + 
+                HBP + SF + ERA + CG + SHO + IPouts + HA + HRA + BBA + 
+                SOA + E + DP + FP + SV,
+  data = teams_full,
+  family = binomial
+)
+
+# 3. AIC 기준 단계별 변수 선택 (양방향)
+# trace = FALSE로 설정하여 중간 과정 출력 생략, anova로 요약 확인
+step_model <- stepAIC(full_model, direction = "both", trace = FALSE)
+
+# 4. 최종 선택된 모형 결과 확인
+summary(step_model)
+
+# 5. 'CG'와 'SHO' 최종 제거 모형
+logit_model_final <- glm(
+  cbind(W, L) ~ logRS + logRA + SV, 
+  data =  teams_full, 
+  family = binomial
+)
+
+# 회귀계수 추정치 및 요약 결과 확인
+summary(logit_model_final)
+
+```
+
+## Python
+
+```{python}
+import polars as pl
+import numpy as np
+import statsmodels.formula.api as smf
+import statsmodels.api as sm
+
+# 1. 데이터 랭글링 (변수명 변경 및 결측치 제거)
+# 이전 단계의 teams_logistic_py_sep를 기반으로 진행
+teams_full_py = (
+    teams_filtered
+    .with_columns(
+        logRS = np.log(pl.col("R")),
+        logRA = np.log(pl.col("RA"))
+    )
+)
+
+predictors = [
+    "logRS", "logRA", "H", "X2B", "X3B", "HR", "BB", "SO", "CS", 
+    "HBP", "SF", "ERA", "CG", "SHO", "IPouts", "HA", "HRA", "BBA", 
+    "SOA", "E", "DP", "FP", "SV"
+]
+
+
+# 분석에 쓰일 컬럼만 남기고 결측치 제거
+columns_to_keep = ["WPct", "G"] + predictors
+teams_pd_full = teams_full_py.select(columns_to_keep).drop_nulls().to_pandas()
+
+
+# 2. 양방향 단계적 선택법(Bidirectional Stepwise Selection) 함수
+def stepwise_selection_aic(df, target, predictors, weight_col):
+    # R의 stepAIC(full_model)처럼 모든 변수를 포함한 상태에서 시작
+    current_predictors = list(predictors)
+    
+    while True:
+        # 현재 모형의 AIC 계산
+        formula = f"{target} ~ 1 + " + " + ".join(current_predictors)
+        current_model = smf.glm(formula=formula, data=df, family=sm.families.Binomial(), var_weights=df[weight_col]).fit()
+        best_aic = current_model.aic
+        
+        best_action = None
+        best_candidate = None
+        
+        # [Step A] Backward: 현재 모형에서 변수 하나씩 빼보기
+        for var in current_predictors:
+            test_preds = [p for p in current_predictors if p != var]
+            test_formula = f"{target} ~ 1 + " + " + ".join(test_preds)
+            test_model = smf.glm(formula=test_formula, data=df, family=sm.families.Binomial(), var_weights=df[weight_col]).fit()
+            
+            if test_model.aic < best_aic:
+                best_aic = test_model.aic
+                best_action = 'drop'
+                best_candidate = var
+                
+        # [Step B] Forward: 현재 빠져있는 변수 하나씩 다시 넣어보기
+        excluded_predictors = [p for p in predictors if p not in current_predictors]
+        for var in excluded_predictors:
+            test_preds = current_predictors + [var]
+            test_formula = f"{target} ~ 1 + " + " + ".join(test_preds)
+            test_model = smf.glm(formula=test_formula, data=df, family=sm.families.Binomial(), var_weights=df[weight_col]).fit()
+            
+            if test_model.aic < best_aic:
+                best_aic = test_model.aic
+                best_action = 'add'
+                best_candidate = var
+                
+        # [Step C] AIC 개선 여부에 따라 행동 결정
+        if best_action == 'drop':
+            current_predictors.remove(best_candidate)
+            print(f"Dropped: {best_candidate:<10} | New AIC: {best_aic:.4f}")
+        elif best_action == 'add':
+            current_predictors.append(best_candidate)
+            print(f"Added:   {best_candidate:<10} | New AIC: {best_aic:.4f}")
+        else:
+            # 빼거나 넣어도 AIC가 더 이상 낮아지지 않으면 반복 종료
+            print("\nStepwise selection completed.")
+            break 
+            
+    # 최종 모형 적합
+    final_formula = f"{target} ~ 1 + " + " + ".join(current_predictors)
+    final_model = smf.glm(formula=final_formula, data=df, family=sm.families.Binomial(), var_weights=df[weight_col]).fit()
+    return current_predictors, final_model
+  
+# 3. 함수 실행 및 최종 모형 확인
+final_vars, step_model_py = stepwise_selection_aic(teams_pd_full, "WPct", predictors, "G")
+print(step_model_py.summary())
+
+
+# 5. 'CG'와 'SHO' 최종 제거 모형
+logit_model_final = smf.glm(
+    formula="WPct ~ logRS + logRA + SV",
+    data=teams_pd_full,
+    family=sm.families.Binomial(),
+    var_weights=teams_pd_full["G"]
+).fit()
+
+# 회귀계수 추정치 및 요약 결과 확인
+print(logit_model_final.summary())
+
+
+```
+
+:::
+
+------------------------------------------------------------------------
+
+#### **결과해석**
+
+**단계적 변수 선택 결과 (stepAIC)**
+
+23개 설명변수를 포함한 full model에서 출발하여 AIC 기준 양방향 단계적
+변수 선택을 수행한 결과, `logRS`, `logRA`, `CG`, `SHO`, `SV` 5개 변수가
+선택되었다 (AIC = 2601.4, Residual deviance = 106.12, df = 444).
+
+**변수 추가 제거**
+
+선택된 모형에서 `CG`(완투, p = 0.129)와 `SHO`(완봉, p = 0.065)는 통상적인
+유의수준 $\alpha = 0.05$에서 유의하지 않으므로 추가 제거하였다. 최종 모형은
+`logRS`, `logRA`, `SV`(세이브) 3개 변수와 절편으로 구성되며, AIC = 2603.5,
+Residual deviance = 112.28 (df = 446)이다. stepAIC 모형 대비 AIC가 2.1
+증가하였으나, 모형의 간결성을 고려할 때 적절한 선택이다.
+
+**최종 모형 계수 해석**
+
+- **`logRS`** ($\hat{\beta} = 1.614$, $p < 0.001$): 득점이 많을수록 승률이
+  유의하게 높아진다.
+- **`logRA`** ($\hat{\beta} = -1.441$, $p < 0.001$): 실점이 많을수록 승률이
+  유의하게 낮아진다.
+- **`SV`** ($\hat{\beta} = 0.011$, $p < 0.001$): 세이브 수가 많을수록 승률이
+  유의하게 높아진다. 세이브는 불펜 투수진의 안정성을 반영하는 지표로,
+  득실점 외에 승률을 추가적으로 설명한다.
+
+**문제 1의 모형과 비교**
+
+문제 2-1의 모형($\log(R/RA)$만 사용, $\hat{k} \approx 1.75$)과 비교하면,
+최종 모형에서 `logRS`와 `logRA`의 계수가 각각 1.614와 -1.441로 절댓값이
+서로 다르다. 이는 득점과 실점이 승률에 미치는 영향이 대칭적이지 않음을
+시사하며, 단일 비율 $\log(RA/RS)$로 요약하는 피타고라스 모형의 가정이
+완전히 성립하지 않을 수 있음을 보여준다. 또한 `SV`가 유의한 추가 예측변수로
+선택되어, 득실점 외에 불펜 안정성도 팀 승률에 독립적인 기여를 함을 확인하였다.
+Residual deviance도 문제 2-1-2의 180.38에서 112.28로 크게 감소하여 모형
+적합도가 향상되었다.
+
+#### **두 언어의 결과 비교 및 차이점**
+
+선택된 변수(`logRS`, `logRA`, `CG`, `SHO`, `SV`)와 최종 모형의 회귀계수,
+Residual deviance가 R과 Python에서 일치하였다. 단, stepwise 과정에서
+표시되는 AIC 값이 크게 다른데(R: 2601.4 vs Python: 65037.2), 이는 추정
+방식의 차이가 아니라 `statsmodels`가 `var_weights` 사용 시 AIC를 가중
+log-likelihood 기반으로 계산하기 때문이다. 변수 선택의 기준은 AIC의 상대적
+증감이므로 최종 선택 결과에는 영향을 미치지 않는다.
+
+## 문제 2-3
+
+1.  `W`(승리 횟수)를 반응변수로 하여 문제 2-2의 분석을 실시하되 포아송 회귀모형을 사용하라. 결과를 문제 2-2의 모형과 비교하라. 
+
+2.  `W`를 반응변수로 하여 문제2의 분석을 실시하되 음이항 회귀모형을 사용하라. 모형 적합 시 오류가 발생하면 이유를 파악해서 보고하라.
+
+### 답안(2-3-1)
+
+#### **데이터 랭글링 절차**
+
+**R**: 문제 2-2에서 생성한 `teams_full`을 그대로 사용하였다. 반응변수를
+승리 횟수(`W`)로 변경하고, 팀마다 경기 수(`G`)가 다를 수 있으므로
+`offset(log(G))`를 추가하여 노출(exposure)을 보정한 포아송 회귀 모형을
+적합하였다. `stepAIC()`로 양방향 변수 선택 후, 유의하지 않은 `SHO`(p =
+0.075)를 추가 제거하여 최종 모형을 확정하였다.
+
+**Python**: `teams_full_py`에서 반응변수 `W`와 예측변수들을 선택한 후
+결측치를 제거하였다. 2-2의 stepwise 함수를 포아송 회귀에 맞게 수정하여
+`smf.glm(..., family=Poisson(), exposure=df[G])`를 사용하였으며, R과
+동일하게 `SHO`를 추가 제거한 최종 모형을 적합하였다.
+------------------------------------------------------------------------
+
+::: panel-tabset
+## R
+
+```{r}
+# 1. 절편이 있는 Full 포아송 회귀 모형 적합
+# 반응변수 W, offset으로 log(G) 추가
+full_poisson <- glm(
+  W ~ logRS + logRA + H + X2B + X3B + HR + BB + SO + CS + 
+      HBP + SF + ERA + CG + SHO + IPouts + HA + HRA + BBA + 
+      SOA + E + DP + FP + SV + offset(log(G)),
+  data = teams_full,
+  family = poisson
+)
+
+# 2. AIC 기준 단계별 변수 선택 (양방향)
+step_poisson <- stepAIC(full_poisson, direction = "both", trace = FALSE)
+
+# 3. 최종 선택된 포아송 모형 결과 확인
+summary(step_poisson)
+
+# 4. SHO 변수 제거하고 최종 모형
+final_poisson <- glm(
+  W ~ logRS + ERA + SV + offset(log(G)),
+  data = teams_full,
+  family = poisson
+)
+summary(final_poisson)
+
+```
+
+## Python
+
+```{python}
+# 1. 포아송 분석을 위해 반응변수 'W'가 포함된 데이터셋을 다시 정의
+columns_to_keep_poi = ["W", "G"] + predictors
+teams_pd_poisson = teams_full_py.select(columns_to_keep_poi).drop_nulls().to_pandas()
+
+# 2. 포아송 회귀용 양방향 단계적 선택법 함수 (family와 offset 처리 변경)
+def stepwise_selection_poisson(df, target, predictors, exposure_col):
+    current_predictors = list(predictors)
+    
+    while True:
+        formula = f"{target} ~ 1 + " + " + ".join(current_predictors)
+        # Poisson family와 exposure 인자 사용
+        current_model = smf.glm(formula=formula, data=df, family=sm.families.Poisson(), exposure=df[exposure_col]).fit()
+        best_aic = current_model.aic
+        
+        best_action = None
+        best_candidate = None
+        
+        # [Step A] Backward
+        for var in current_predictors:
+            test_preds = [p for p in current_predictors if p != var]
+            test_formula = f"{target} ~ 1 + " + " + ".join(test_preds)
+            test_model = smf.glm(formula=test_formula, data=df, family=sm.families.Poisson(), exposure=df[exposure_col]).fit()
+            
+            if test_model.aic < best_aic:
+                best_aic = test_model.aic
+                best_action = 'drop'
+                best_candidate = var
+                
+        # [Step B] Forward
+        excluded_predictors = [p for p in predictors if p not in current_predictors]
+        for var in excluded_predictors:
+            test_preds = current_predictors + [var]
+            test_formula = f"{target} ~ 1 + " + " + ".join(test_preds)
+            test_model = smf.glm(formula=test_formula, data=df, family=sm.families.Poisson(), exposure=df[exposure_col]).fit()
+            
+            if test_model.aic < best_aic:
+                best_aic = test_model.aic
+                best_action = 'add'
+                best_candidate = var
+                
+        # [Step C] AIC 개선 여부에 따라 행동 결정
+        if best_action == 'drop':
+            current_predictors.remove(best_candidate)
+            print(f"Dropped: {best_candidate:<10} | New AIC: {best_aic:.4f}")
+        elif best_action == 'add':
+            current_predictors.append(best_candidate)
+            print(f"Added:   {best_candidate:<10} | New AIC: {best_aic:.4f}")
+        else:
+            print("\nStepwise selection completed.")
+            break 
+            
+    final_formula = f"{target} ~ 1 + " + " + ".join(current_predictors)
+    final_model = smf.glm(formula=final_formula, data=df, family=sm.families.Poisson(), exposure=df[exposure_col]).fit()
+    return current_predictors, final_model
+
+# 3. 함수 실행 및 최종 모형 확인
+final_vars_poi, step_model_poi = stepwise_selection_poisson(teams_pd_poisson, "W", predictors, "G")
+print(step_model_poi.summary())
+
+# 5. 'CG'와 'SHO' 최종 제거 모형
+poisson_final = smf.glm(
+    formula="W ~ logRS + ERA + SV",
+    data=teams_pd_poisson,
+    family=sm.families.Poisson(),
+    exposure=teams_pd_poisson["G"]
+).fit()
+
+# 회귀계수 추정치 및 요약 결과 확인
+print(poisson_final.summary())
+```
+
+:::
+
+------------------------------------------------------------------------
+
+#### **결과해석**
+
+**단계적 변수 선택 결과**
+
+포아송 회귀에서 AIC 기준 양방향 단계적 변수 선택 결과, `logRS`, `ERA`,
+`SHO`, `SV` 4개 변수가 선택되었다 (AIC = 2874.2, Residual deviance =
+64.37, df = 445). `SHO`(완봉)는 p = 0.075로 유의하지 않아 추가 제거하였다.
+
+**최종 모형 결과**
+
+최종 모형은 `logRS`, `ERA`, `SV`와 절편으로 구성된다 (AIC = 2875.4,
+Residual deviance = 67.53, df = 446). 모든 변수가 유의하였다($p < 0.001$).
+
+- **`logRS`** ($\hat{\beta} = 0.801$): 득점이 많을수록 승리 횟수가 증가한다.
+- **`ERA`** ($\hat{\beta} = -0.164$): 평균자책점이 높을수록 승리 횟수가
+  감소한다. ERA는 투수 성적의 핵심 지표로, 실점 억제 능력을 직접 반영한다.
+- **`SV`** ($\hat{\beta} = 0.005$): 세이브 수가 많을수록 승리 횟수가
+  증가한다.
+
+**문제 2-2의 로지스틱 모형과 비교**
+
+두 모형 모두 `logRS`와 `SV`를 공통 변수로 선택하였다. 그러나 로지스틱
+모형은 `logRA`(실점의 로그)를 선택한 반면, 포아송 모형은 `ERA`(평균자책점)를
+선택하였다. 두 변수 모두 팀의 실점 억제 능력을 반영하나, 포아송 모형에서는
+`logRA` 대신 경기당 실점을 직접 표현하는 `ERA`가 더 설명력이 높게 나타났다.
+또한 로지스틱 모형의 Residual deviance(112.28)보다 포아송 모형(67.53)이
+더 작아 데이터에 더 잘 적합되었음을 보여준다.
+
+#### **두 언어의 결과 비교 및 차이점**
+
+R과 Python의 stepwise 선택 변수, 최종 모형의 회귀계수, 표준오차, Residual
+deviance가 모두 일치하였다. 2-2와 달리 포아송 회귀에서는 Python의 AIC도
+R과 동일한 스케일(2874-2875)로 계산되어 직접 비교가 가능하다. 이는
+`var_weights` 사용 시에만 AIC 스케일 차이가 발생하고, `exposure` 인자
+사용 시에는 R과 동일한 방식으로 계산되기 때문이다.
+
+### 답안(2-3-2)
+
+#### **데이터 랭글링 절차**
+
 **R**: 
 
 **Python**: 
@@ -762,15 +1143,6 @@ Residual Deviance(180.24), 자유도(448), 95% 신뢰구간이 모두 일치하�
 
 #### **두 언어의 결과 비교 및 차이점**
 
-
-## 문제 2-3
-
-1.  `W`(승리 횟수)를 반응변수로 하여 문제 2-2의 분석을 실시하되 포아송 회귀모형을 사용하라. 결과를 문제 2-2의 모형과 비교하라. 
-
-2.  `W`를 반응변수로 하여 문제2의 분석을 실시하되 음이항 회귀모형을 사용하라. 모형 적합 시 오류가 발생하면 이유를 파악해서 보고하라.
-
-### 답안
-
 ## 문제 2-4
 
 스테로이드 시대인 1994년에서 2005년의 기간과 최근 시대인 2010년에서 2025 기간의 $k$ 계수가 유의하게 변화하는지 파악하기 위해 $i$번째 팀과 연도 $t$에 대해 다음과 같은 식을 생각해 볼 수 있다.
@@ -782,8 +1154,36 @@ $$
 이 때 $I(1994 \leq t \leq 2005)$는 괄호안의 조건이 만족되면 1의 값을 가지고 아니면 0의 값을 가지는 지시함수이고, $g$는 스테로이드 시대와 최근 시대의 차이를 나타내는 계수이다. 위의 식에서 $g$가 0과 유의하게 같은지 가설검정을 수행하게 해주는 로지스틱 모형을 적합하고 결과를 해석하라. (코로나 시즌인 2020년은 제외한다.)
 
 
-### 답안
+### 답안(2-4)
 
+#### **데이터 랭글링 절차**
+
+**R**: 
+
+**Python**: 
+------------------------------------------------------------------------
+
+::: panel-tabset
+## R
+
+```{r}
+
+```
+
+## Python
+
+```{python}
+
+```
+
+:::
+
+------------------------------------------------------------------------
+
+#### **결과해석**
+
+
+#### **두 언어의 결과 비교 및 차이점**
 # 3부  데이터 분석 기술
 
 숙제 2에서는 제출용 GitHub 저장소에 작업한 Quarto markdown 소스 파일(`hw02.qmd`)을 올리면 GitHub에서 자동으로 HTML 파일 및 주피터 노트북 파일(`.ipynb`)을 만들고 이것을 [GitHub Pages](https://docs.github.com/en/pages/quickstart)에서 웹페이지로 보이도록 설정하였다. 
