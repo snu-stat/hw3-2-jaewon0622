@@ -630,22 +630,73 @@ R과 Python의 Residual Deviance(180.38), 자유도(449), p-value(1.000)가
 
 #### **데이터 랭글링 절차**
 
-**R**: 
+**R**: 문제 2-1-1에서 생성한 `teams_filtered`에 `log(R)`과 `log(RA)`를
+추가하였다. 절편 없는 로지스틱 회귀 모형을 `cbind(W, L)`을 종속변수로
+하여 적합하였다.
 
-**Python**: 
+**Python**: `teams_filtered`에 `log_R`, `log_RA`를 추가한 후 Pandas로
+변환하였다. 2-1-2와 동일하게 `var_weights=G`로 시행 횟수를 반영하여
+절편 없는 로지스틱 회귀 모형을 적합하였다.
 ------------------------------------------------------------------------
 
 ::: panel-tabset
 ## R
 
 ```{r}
+# R 데이터 랭글링: 기존 teams_filtered에 log_R, log_RA 추가
+teams_logistic_sep <- teams_filtered %>%
+  mutate(
+    log_R = log(R),
+    log_RA = log(RA),
+    L = G - W
+  )
 
+# 절편 없는 로지스틱 선형회귀 모형 적합 (0 + log_R + log_RA)
+logit_model_r_sep <- glm(
+  cbind(W, L) ~ 0 + log_R + log_RA, 
+  data = teams_logistic_sep, 
+  family = binomial
+)
+
+# 회귀계수 추정치 및 요약 결과 확인
+summary(logit_model_r_sep)
+
+# 95% 신뢰구간 확인
+confint(logit_model_r_sep)
 ```
 
 ## Python
 
 ```{python}
+import polars as pl
+import numpy as np
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
 
+# Python 데이터 랭글링: 기존 teams_filtered에 log_R, log_RA 추가
+teams_logistic_py_sep = (
+    teams_filtered
+    .with_columns(
+        log_R = np.log(pl.col("R")),
+        log_RA = np.log(pl.col("RA"))
+    )
+)
+
+teams_pd_sep = teams_logistic_py_sep.to_pandas()
+
+# 절편 없는 로지스틱 선형회귀 모형 적합 (0 + log_R + log_RA)
+logit_model_py_sep = smf.glm(
+    formula="WPct ~ 0 + log_R + log_RA",
+    data=teams_pd_sep,
+    family=sm.families.Binomial(),
+    var_weights=teams_pd_sep["G"]
+).fit()
+
+# 회귀계수 추정치 및 요약 결과 확인
+print(logit_model_py_sep.summary())
+
+# 95% 신뢰구간 확인
+print(logit_model_py_sep.conf_int(alpha=0.05))
 ```
 
 :::
@@ -654,9 +705,27 @@ R과 Python의 Residual Deviance(180.38), 자유도(449), p-value(1.000)가
 
 #### **결과해석**
 
+$\log(R)$과 $\log(RA)$를 각각 설명변수로 분리하여 절편 없는 로지스틱
+회귀를 적합한 결과, $\hat{\beta}_{log\_R} = 1.753$, $\hat{\beta}_{log\_RA}
+= -1.753$으로 두 계수의 절댓값이 거의 동일하고 부호만 반대로 나타났다.
+
+이는 2-1-2의 단일 계수 $\hat{\beta}_1 = 1.753$과 수학적으로 동치임을
+보여준다. $\log(R/RA) = \log(R) - \log(RA)$이므로, $\beta \cdot \log(R/RA)$는
+$\beta \cdot \log(R) + (-\beta) \cdot \log(RA)$와 같고, 실제로 두 계수의
+추정치가 $1.753$과 $-1.753$으로 이를 확인할 수 있다. 따라서 2-1-1의
+피타고라스 공식, 2-1-2의 단일 로그비율 모형, 그리고 본 모형은 모두
+수학적으로 동일한 구조를 가진다.
+
+한편 2-1-2와 비교하면 Residual Deviance는 180.38에서 180.24로 미세하게
+감소하였으나, 자유도가 449에서 448로 하나 줄어 AIC는 2665.6에서 2667.5로
+오히려 증가하였다. 이는 설명변수를 분리하여도 모형의 실질적인 설명력이
+개선되지 않음을 나타내며, 두 계수가 사실상 동일한 정보를 담고 있음을
+재확인한다.
 
 #### **두 언어의 결과 비교 및 차이점**
 
+R과 Python의 $\hat{\beta}_{log\_R}$(1.7527), $\hat{\beta}_{log\_RA}$(-1.7531),
+Residual Deviance(180.24), 자유도(448), 95% 신뢰구간이 모두 일치하였다.
 
 ## 문제 2-2
 
