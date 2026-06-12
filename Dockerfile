@@ -18,16 +18,16 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86
 
 # 4. Conda 경로 설정 및 환경 생성 (Python 패키지 추가)
 ENV PATH=$CONDA_DIR/bin:$PATH
-RUN conda create -n r-reticulate python=3.10 -y && \
-    conda install -n r-reticulate -c conda-forge expat numpy pandas matplotlib polars statsmodels scipy plotnine pyarrow -y && \
-    /opt/conda/envs/r-reticulate/bin/pip install pylahman
+RUN conda create -n introds python=3.10 -y && \
+    conda install -n introds -c conda-forge expat numpy pandas matplotlib polars statsmodels scipy plotnine pyarrow -y && \
+    /opt/conda/envs/introds/bin/pip install pylahman
 
 # 5. R 패키지 설치 (R 패키지 추가)
 RUN R -e "install.packages(c('reticulate', 'remotes', 'IRkernel', 'mdsr', 'babynames', 'Lahman', 'MASS', 'broom'))" && \
     R -e "IRkernel::installspec(user = FALSE)"
 
 # 6. reticulate가 사용할 Python 경로 고정 (환경 변수)
-ENV RETICULATE_PYTHON=/opt/conda/envs/r-reticulate/bin/python
+ENV RETICULATE_PYTHON=/opt/conda/envs/introds/bin/python
 
 # 7. Binder용 jovyan 유저 생성
 ENV NB_USER=jovyan
