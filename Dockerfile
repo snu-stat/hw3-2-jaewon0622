@@ -19,7 +19,7 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86
 # 4. Conda 경로 설정 및 환경 생성 (Python 패키지 추가)
 ENV PATH=$CONDA_DIR/bin:$PATH
 RUN conda create -n r-reticulate python=3.10 -y && \
-    conda install -n r-reticulate -c conda-forge expat=2.5.0 numpy pandas matplotlib polars statsmodels scipy plotnine pyarrow -y && \
+    conda install -n r-reticulate -c conda-forge expat numpy pandas matplotlib polars statsmodels scipy plotnine pyarrow -y && \
     /opt/conda/envs/r-reticulate/bin/pip install pylahman
 
 # 5. R 패키지 설치 (R 패키지 추가)
