@@ -21,7 +21,8 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86
 ENV PATH=$CONDA_DIR/bin:$PATH
 RUN conda create -n introds python=3.10 pip -y --override-channels -c conda-forge && \
     conda install -n introds --override-channels -c conda-forge expat numpy pandas matplotlib polars statsmodels scipy plotnine pyarrow -y && \
-    /opt/conda/envs/introds/bin/pip install pylahman
+    /opt/conda/envs/introds/bin/pip install pylahman && \
+    conda install -n base --override-channels -c conda-forge jupyter -y
 
 # 5. R 패키지 설치 (R 패키지 추가)
 RUN R -e "install.packages(c('reticulate', 'remotes', 'IRkernel', 'mdsr', 'babynames', 'Lahman', 'MASS', 'broom'))" && \
