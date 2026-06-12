@@ -52,6 +52,7 @@ jobs:
           quarto render
           quarto convert hw03.qmd
           cp hw03.ipynb _site/
+          cp Dockerfile _site/
         shell: bash -l {0}
 
       - name: Deploy to GitHub Pages
