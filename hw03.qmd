@@ -290,7 +290,7 @@ confint(teams_fm)
 
 ```{python}
 import polars as pl
-import pylahman
+# import pylahman
 import pandas as pd
 import numpy as np
 from scipy.optimize import curve_fit
@@ -1331,7 +1331,6 @@ import polars as pl
 import numpy as np
 import statsmodels.formula.api as smf
 import statsmodels.api as sm
-import pylahman
 
 # 1. 데이터 로드 및 랭글링
 Teams = pl.read_csv(
